@@ -1,6 +1,7 @@
 import argparse
 import sys
 
+import lief
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 
@@ -29,6 +30,38 @@ def parseELF(fname, **kwargs):
 
     return isolate
 
+def find_next_offset(symbols_infos, name):
+    did_found = False
+    for s in symbols_infos:
+        if did_found:
+            return s[1]
+
+        did_found = (s[0] == name)
+
+    return -1
+
+def parseMachO(fname, **kwargs):
+    f = lief.parse(fname)
+    # sections = f.sections
+    symbols = {s.name: s for s in f.symbols}
+    symbols_infos = sorted([(s.name, s.value) for s in f.symbols], key=lambda info: info[1])
+    sc = f.symbol_command
+    blobs, offsets = [], []
+    for sn in Constants.kAppAOTSymbols:
+        s = symbols[sn]
+        next_offset = find_next_offset(symbols_infos, sn)
+        s_size = next_offset - s.value
+        print(f'{sn}, start {s.value}, end {s.value + s_size - 2}, size {s_size}')
+        
+        blob = f.get_content_from_virtual_address(s.value, s_size)
+        blobs.append(bytes(blob))
+        offsets.append(s.value)
+
+    vm = Snapshot(blobs[0], offsets[0], blobs[1], offsets[1])
+    isolate = Snapshot(blobs[2], offsets[2], blobs[3], offsets[3], vm)
+
+    return isolate
+
 def dump(snapshot, output):
     f = open(output, 'w')
     f.write('  ___      _    _                   \n')
@@ -50,5 +83,6 @@ parser.add_argument('file', help='target Flutter binary')
 parser.add_argument('output', help='output file')
 
 args = parser.parse_args()
-isolate = parseELF(args.file)
+# isolate = parseELF(args.file)
+isolate = parseMachO(args.file)
 dump(isolate, args.output)
